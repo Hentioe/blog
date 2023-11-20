@@ -70,6 +70,21 @@ KERL_CONFIGURE_OPTIONS="--without-javac \
 >由于此处只是迁移，上述的“当前”并不指博客发文时间，而是原文章的发表时间。同理，对当前版本的描述也是过时的。
 {: .prompt-warning }
 
+## 回复评论
+
+>这里的评论不一定是博客的评论，包含从其它位置迁移过来时，最初的一些评论。
+{: .prompt-warning }
+
+有人说你为什么不直接重写 Erlang 的 nix 包的参数，让它安装需要的版本呢？例如：
+
+```nix
+pkgs.callPackage ./generic-builder.nix { version = "26.0"; sha256 = "sha256-7z5LkCLyjqGlo48XlcwAUiu1FkmAAewEGnP30QDDme8="; }
+```
+
+实际上在 NixOS 中，`generic-builder.nix` 这类文件主要是为了方便包的维护者升级的，维护者可以通过重写 `version` 和 `sha256` 来升级 Nixpkgs 中的 Erlang 版本。但是，这不表示你能将其作为一个动态的版本安装器使用。因为这个文件并不通用，它在重写后要经过测试，如果有问题还会进行特定的修复。它的目的只是为了方便维护者升级版本，而不是作为一个动态的安装器。
+
+并且它完全达不到 asdf 的多版本共存效果。在 NixOS 中，共存多个“变体”的通常是库，而不是包含入口的可执行程序。
+
 ## 加入我们
 
 如果你也是 Elixir 开发者/爱好者，这里有一些我创建的群组：
