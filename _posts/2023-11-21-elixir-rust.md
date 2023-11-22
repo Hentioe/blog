@@ -7,7 +7,7 @@ tags: [Elixir, Rust, rustler]     # TAG names should always be lowercase
 
 ## 前言
 
-我主用的开发语言是 Elixir 和 Rust，尤其是 Elixir 在我很有限的编程经历里算使用很久了。在前期我始终将它们独立使用，各自解决不同的问题。直到后来，我才开始尝试在 Elixir 中集成 Rust，在优化性能的同时共享 Rust 的丰富生态。
+我主用的开发语言是 Elixir 和 Rust，尤其是 Elixir 在我很有限的编程经历中算使用很长了。在前期我始终将它们独立使用，各自解决不同的问题。直到后来，我才开始尝试在 Elixir 中集成 Rust，在优化性能的同时共享 Rust 的丰富生态。
 
 自此不可收拾，在具备一定复杂度的 Elixir 项目中，我基本上都会集成 Rust 代码。
 
@@ -26,7 +26,7 @@ Elixir 发起 FFI 调用，也是通过 Erlang 的 NIF 实现的。NIF 相比于
 
 我们可以调用 `enif_make_atom` 函数在 native 代码中生成 `atom` 类型，调用 `enif_consume_timeslice` 函数让出 CPU 机会以避免阻塞 Erlang 进程（让其重新参与调度，这至关重要）。等等。
 
-_虽然 NIF 不如直接绑定库函数方便，但它可以进行更多的优化。在某些协作式调度的语言中，FFI 调用可能会阻塞整个运行时，因为它没有像 Erlang 这样设计，没有提供给 native 代码影响运行时的机会。_
+_虽然 NIF 不如直接绑定库函数方便，但它可以进行更多的优化。在某些协作式调度的语言中，FFI 调用可能会阻塞整个调度器，因为它没有像 Erlang 这样设计，没有提供给 native 代码影响运行时的机会。_
 
 ## Rustler
 
@@ -89,6 +89,7 @@ defmodule HelloRustler.Math  do
   use Rustler, otp_app: :hello_rustler, crate: "calculator"
 
   # When your NIF is loaded, it will override this function.
+  @spec add(integer(), integer()) :: integer()
   def add(_left, _right), do: :erlang.nif_error(:nif_not_loaded)
 end
 ```
@@ -106,11 +107,142 @@ iex> HelloRustler.Math.add 99, 1
 
 _大功告成，这便是最基本的 Rustler 使用指南。_
 
-### 复杂参数
+### 复合类型的参数
 
-_待写。_
+在上面的例子中，我们仅使用了 `integer`（或者说 Rust 的 `i64`）这种基本类型作为参数和返回值，这肯定是不够用的。在以往其它语言的 FFI 绑定的经验里，通常要将复合类型中的非基本字段以及自身逐个转换为指针，将指针传递给 native 函数，再从 native 函数逐个解析并还原为原生复合类型。这导致绑定虽然只是一层包装，但面对数量众多的接口时也要编写大量的代码，十分不便。
+
+[rustler](https://github.com/rusterlium/rustler) 对这方面提供良好的支持，它在背后自动生成所有转换代码。无论是 Elixir 还是 Rust，我们都可以直接操作原生复合类型（Elixir 的 `struct`/`map` 和 Rust 的 `struct`）来使用。这是一个例子：
+
+添加一个新的 native 函数和所需的结构体：
+
+```rust
+use rustler::NifStruct;
+
+// 省略 add 函数...
+
+// 重点1：在（作为参数的）结构体上派生 `NifStruct`。
+// 重点2：添加 `module` 属性并赋值为对应的 Elixir 模块名。
+#[derive(Debug, NifStruct)]
+#[module = "HelloRustler.Math.UniversalInput"]
+pub struct UniversalInput {
+    // 左值
+    pub left: i64,
+    // 右值
+    pub right: i64,
+    // 运算符
+    pub operator: i64,
+}
+
+#[rustler::nif]
+fn caculate(input: UniversalInput) -> i64 {
+    match input.operator {
+        1 => input.left + input.right,
+        2 => input.left - input.right,
+        3 => input.left * input.right,
+        _ => 0,
+    }
+}
+
+// 注意，你必须将 `caculate` 函数名添加到此处才能绑定。
+rustler::init!("Elixir.HelloRustler.Math", [add, caculate]);
+```
+
+_我们的新函数 `caculate` 从输入中动态决定运算符，所以我将其参数命名为 `UniversalInput`（通用输入）。_
+
+创建 `lib/hello_rustler/math/universal_input.ex` 文件，内容如下：
+
+```elixir
+# 此处的模块名称和 Rust 代码中的要一样。
+defmodule HelloRustler.Math.UniversalInput do
+  @enforce_keys [:left, :right, :operator]
+  defstruct [:left, :right, :operator, :result]
+
+  @type t :: %__MODULE__{
+    left: integer,
+    right: integer,
+    operator: integer
+  }
+end
+```
+
+在 `lib/hello_rustler/math.ex` 中添加新的函数绑定：
+
+```elixir
+# When your NIF is loaded, it will override this function.
+@spec caculate(HelloRustler.Math.UniversalInput.t()) :: integer()
+def caculate(_input), do: :erlang.nif_error(:nif_not_loaded)
+```
+
+通过 IEx 调用这个函数：
+
+```elixir
+iex> alias HelloRustler.Math
+HelloRustler.Math
+iex> Math.caculate %Math.UniversalInput{left: 1, right: 99, operator: 1}
+100
+iex> Math.caculate %Math.UniversalInput{left: 1, right: 99, operator: 2}
+-98
+iex> Math.caculate %Math.UniversalInput{left: 1, right: 99, operator: 3}
+99
+```
+
+这并非一个有实际价值的例子，它为了尽量简化代码突出重点，其设计是简陋和非主流的。例如，运算符我们应该用 Rust 枚举而不是整数，且没有处理不受支持的运算符只是简单的返回 `0`。
 
 ### Elixir 风格的返回值
+
+在上面的例子中，我们并没有处理错误，故也没有设计如何返回错误。碰巧的是，Rust 的 `Result` 和 Elixir 风格的返回值其实具有类似的本质。所以 [`rustler`](https://hex.pm/packages/rustler) 对 `Rustlt` 进行了专门的特征实现，以自动转换返回值为 Elixir 风格。
+
+>你们可以自行思考一下 `{:ok, value}`/`{:error, reason}` 和 `Ok(v)`/`Err(e)` 的相似之处。
+{: .prompt-warning }
+
+下面的例子我将不再手把手告知编辑哪些文件，并且仅给出整体或局部的代码。
+
+```rust
+use rustler::Atom;
+
+// 定义我们需要使用的 atoms。
+mod my_atoms {
+    rustler::atoms! {
+        // 一个表达「不支持的运算符」错误的 atom。
+        unsupported_operator,
+    }
+}
+
+// 返回 `Result<i64, Atom>`，即 `Ok(i64)` 或 `Err(Atom)`。
+#[rustler::nif]
+fn caculate(input: UniversalInput) -> Result<i64, Atom> {
+    match input.operator {
+        1 => Ok(input.left + input.right),
+        2 => Ok(input.left - input.right),
+        3 => Ok(input.left * input.right),
+        _ => 
+        // 返回错误，不支持的运算符。
+        Err(my_atoms::unsupported_operator()),
+    }
+}
+```
+
+再次调用 `caculate/2` 函数：
+
+```elixir
+iex> alias HelloRustler.Math
+HelloRustler.Math
+iex> Math.caculate %Math.UniversalInput{left: 1, right: 99, operator: 1}
+{:ok, 100}
+iex> Math.caculate %Math.UniversalInput{left: 1, right: 99, operator: 4}
+{:error, :unsupported_operator}
+```
+
+>别忘了将函数的 `@spec` 的返回值部分改为 `{:ok, integer} | {:error, atom}`，以避免 Dialyzer 产生错误。
+{: .prompt-warning }
+
+可以看到我们的绑定函数的返回值已经符合 Elixir 的风格，并能正确返回错误原因。同上，这个例子的实际价值也不太大，因为我们不总是满足于返回 `atom` 作为错误原因。
+
+在 Rust 中错误处理通常会将所有错误包装在自己的错误类型中，我们给自己的错误类型实现 `rustler::types::Encoder` 即可集中处理错误的返回格式。例如返回一个结构体作为原因，并包含错误消息、错误码等。
+
+我本人开发的 [`img_grider`](https://github.com/gramlabs-oss/img_grider) 库，它返回的错误是这样的：`{:error, %ImgGrider.Error{kind: :magick_exception, message: "failed to read image"}}`。它包含 `kind` 和 `message`，分别可用于匹配错误类型和显示错误细节。
+
+## 优化调度
 
 _待写。_
 
