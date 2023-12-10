@@ -1,7 +1,7 @@
 ---
 title: 在 NixOS 中使用 asdf 管理 Erlang 的多个版本
 date: 2023-11-20 22:10:00 +0800
-categories: [技术, 编程]
+categories: [技术, Linux]
 tags: [NixOS, asdf, Erlang]     # TAG names should always be lowercase
 ---
 
