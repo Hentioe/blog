@@ -1,0 +1,219 @@
+---
+title: 让 Void Linux 成为 Elixir 应用的基础镜像
+date: 2023-12-08 +0800
+categories: [技术, Linux]
+tags: [Void Linux, Elixir, Docker]     # TAG names should always be lowercase
+---
+
+## 前言
+
+Void Linux 是一个忍不住想关注的发行版，它既可以较为精小，又可以相对膨胀。它同时维护 glibc 和 musl 两个不同 C 库的版本，又发布有内置 BusyBox 和 GNU Coreutils 两个不同工具集的版本。
+
+毫无疑问，将 glibc/BusyBox 版本作为基础容器是非常合适的。例如我已将其用作 Elixir 应用的基础，且效果不错。它比 Debian 更小巧，软件包也新得多。至少对我而言 `-void` 已经成为了 `-slim` 的良好替代品。
+
+>注意：此处提及的 `*-slim` 是常见的以 Debian 为基础的镜像“命名风格”，不具有强关联性。
+{: .prompt-warning }
+
+_如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
+
+## 过程
+
+想实现用 Void Linux 环境打包应用的目的，需要从 `Erlang -> Elixir -> App` 这三个步骤先后做起。
+
+### 构建 Erlang 镜像
+
+Erlang 相对来说问题是最少的，通过 `buildx` 命令可轻易构建出多 `arch` 的镜像。从[这里](https://hub.docker.com/r/hentioe/erlang/tags)查看我发布的镜像，同时提供 `amd64` 和 `arm64`。它们是由我的 CI 服务器构建并推送的。我永远会第一时间更新最新的版本，包括 RC。
+
+这是一个例子：
+
+```Dockerfile
+FROM ghcr.io/void-linux/void-glibc-busybox:20231003R1
+
+COPY cleanup.sh /usr/bin/void-cleanup
+
+ENV OTP_VERSION="26.1.2"
+
+LABEL org.opencontainers.image.version=$OTP_VERSION
+
+RUN set -xe \
+    && OTP_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${OTP_VERSION}.tar.gz" \
+    && OTP_DOWNLOAD_SHA256="56042d53b30863d4e720ebf463d777f0502f8c986957fc3a9e63dae870bbafe0" \
+    && fetchDeps=' \
+    curl' \
+    && xbps-install -Suy \
+    && xbps-install -y $fetchDeps \
+    && curl -fSL -o otp-src.tar.gz "$OTP_DOWNLOAD_URL" \
+    && echo "$OTP_DOWNLOAD_SHA256  otp-src.tar.gz" | sha256sum -c - \
+    && runtimeDeps=' \
+    libssl3 \
+    lksctp-tools \
+    ' \
+    && buildDeps=' \
+    autoconf \
+    dpkg \
+    gcc \
+    make \
+    ncurses-devel \
+    openssl-devel \
+    lksctp-tools-devel \
+    pax-utils \
+    binutils \
+    ' \
+    && xbps-install -y $buildDeps \
+    && export ERL_TOP="/usr/src/otp_src_${OTP_VERSION%%@*}" \
+    && mkdir -vp $ERL_TOP \
+    && tar -xzf otp-src.tar.gz -C $ERL_TOP --strip-components=1 \
+    && ( cd $ERL_TOP \
+    && ./otp_build autoconf \
+    && gnuArch="$(dpkg-architecture --query DEB_HOST_GNU_TYPE)" \
+    && ./configure --build="$gnuArch" \
+    && make -j$(getconf _NPROCESSORS_ONLN) \
+    && make install ) \
+    # Clean up \
+    && find /usr/local -regex '/usr/local/lib/erlang/\(lib/\|erts-\).*/\(man\|doc\|obj\|c_src\|emacs\|info\|examples\)' | xargs rm -rf \
+    && find /usr/local -name src | xargs -r find | grep -v '\.hrl$' | xargs rm -v || true \
+    && find /usr/local -name src | xargs -r find | xargs rmdir -vp || true \
+    && scanelf --nobanner -E ET_EXEC -BF '%F' --recursive /usr/local | xargs -r strip --strip-all \
+    && scanelf --nobanner -E ET_DYN -BF '%F' --recursive /usr/local | xargs -r strip --strip-unneeded \
+    && xbps-remove -Ry $buildDeps $fetchDeps \
+    # Install runtime dependencies in the back door to avoid being removed by association. \
+    && xbps-install -y $runtimeDeps \ 
+    && rm -rf otp-src.tar.gz $ERL_TOP \
+    && void-cleanup
+
+CMD ["erl"]
+```
+
+为了尽可能小巧，它会删除文档、源码、示例等文件，并用 `strip` 删除了二进制文件的调试信息。
+
+你可能注意到此 `Dockerfile` 最终执行了一个看起来用于清理的脚本（`void-cleanup`），它在一开始被复制进去。没错，这是我故意内置的，便于执行清理。它是这个样子的：
+
+```sh
+#!/usr/bin/env sh
+
+echo "Clearing xbps cache..."
+rm -rf /var/cache/xbps/*
+
+echo "Clearing xbps repository..."
+find /var/db/xbps/ -type d -name "https___repo-*" -exec rm -rf {} +
+```
+
+### 构建 Elixir 镜像
+
+构建 Elixir 镜像会麻烦一些，因为 Elixir 在编译期间会触发一个 BUG。这个 BUG 和 QEMU 相关，要知道 `buildx` 构建其它架构的镜像时就会用到 QEMU。我可能还需要再声明一遍，这个 BUG 虽然是编译 Elixir 触发的，但和 Erlang/Elixir 没关系，是 Docker 工具链的问题。
+
+从[这里](https://hub.docker.com/r/hentioe/elixir/tags)查看我发布的镜像，同时提供 `amd64` 和 `arm64`（不同的架构刻意做了标签名区分）。它们是由我的 CI 服务器构建并推送的。我永远会第一时间更新最新的版本，包括 RC。
+
+例子：
+
+```Dockerfile
+FROM hentioe/erlang:26.1.2-void
+
+ARG ERL_FLAGS=""
+
+ENV ELIXIR_VERSION="v1.16.0-rc.0" \
+ # set flags from build_arg. \
+ ERL_FLAGS=$ERL_FLAGS \
+ # elixir expects utf8. \
+ LANG=C.UTF-8 
+
+RUN set -xe \
+ && ELIXIR_DOWNLOAD_URL="https://github.com/elixir-lang/elixir/archive/${ELIXIR_VERSION}.tar.gz" \
+ && ELIXIR_DOWNLOAD_SHA256="2dfbe017ccff1b05cacf80d7204b088ab438ec6ff1311a3bd9d33ceb2c26674e" \
+ && buildDeps=' \
+ curl \
+ make \
+ glibc-locales \
+ ' \
+ && xbps-install -Sy \
+ && xbps-install -y $buildDeps \
+ # Set locale to C.UTF-8 \
+ && sed -i 's/^#C.UTF-8/C.UTF-8/' /etc/default/libc-locales \
+ && xbps-reconfigure -f glibc-locales \
+ # Build and install Elixir \
+ && curl -fSL -o elixir-src.tar.gz $ELIXIR_DOWNLOAD_URL \
+ && echo "$ELIXIR_DOWNLOAD_SHA256  elixir-src.tar.gz" | sha256sum -c - \
+ && mkdir -p /usr/local/src/elixir \
+ && tar -xzC /usr/local/src/elixir --strip-components=1 -f elixir-src.tar.gz \
+ && ( cd /usr/local/src/elixir \
+ && make install clean ) \
+ # Clean up \
+ && find /usr/local/src/elixir/ -type f -not -regex "/usr/local/src/elixir/lib/[^\/]*/lib.*" -exec rm -rf {} + \
+ && find /usr/local/src/elixir/ -type d -depth -empty -delete \
+ && xbps-remove -Ry $buildDeps \
+ # Install runtime dependencies in the back door to avoid being removed by association. \
+ && runtimeDeps=' \
+ libstdc++ \
+ libssl3 \
+ lksctp-tools \
+ ncurses-libs \
+ ' \
+ && xbps-install -y $runtimeDeps \ 
+ && rm elixir-src.tar.gz \
+ && rm -f /tmp/jit-*.dump /tmp/perf-*.map \
+ && void-cleanup
+
+CMD ["iex"]
+```
+
+我们从外部接收了一个 `ERL_FLAGS` 环境变量。这个变量是避免 `buildx` BUG 的刻意为之，否则并不需要它（或者说不用设置它）。当我们为其它的 `arch` 构建镜像时，必须用这个变量传递 `+JPperf true` 值，否则会构建失败。由于这个原因，我不得不将不同架构的镜像用各自的标签独立开来。
+
+### 构建 App 镜像
+
+这是一个例子：
+
+```Dockerfile
+# 从 ARM64 镜像构建。
+FROM hentioe/elixir:1.16.0-rc.0-otp-26-void-arm64 as build
+
+ENV MIX_ENV=prod
+
+WORKDIR /src
+
+COPY . /src/
+
+RUN mix deps.get && mix compile && mix release
+
+
+# 使用 Void Linux 镜像打包。
+FROM ghcr.io/void-linux/void-glibc-busybox:20231003R1
+
+RUN set -xe \
+    && runtimeDeps=' \
+    libssl3 \
+    lksctp-tools \
+    ncurses-libs \
+    ' \
+    && buildDeps='glibc-locales' \
+    && xbps-install -Sy $buildDeps \
+    # Enable C.UTF-8 locale. \
+    && sed -i 's/^#C.UTF-8/C.UTF-8/' /etc/default/libc-locales \
+    && xbps-reconfigure -f glibc-locales \
+    && xbps-remove -Ry $buildDeps \
+    && xbps-install -y $runtimeDeps \
+    # Clear xbps cache. \
+    && rm -rf /var/cache/xbps/* \
+    # Clearing xbps repository. \
+    && find /var/db/xbps/ -type d -name "https___repo-*" -exec rm -rf {} +
+
+ARG APP_HOME=/home/app_name
+
+COPY --from=build /src/_build/prod/rel/app_name $APP_HOME
+
+WORKDIR $APP_HOME
+
+ENV LANG=C.UTF-8
+ENV PATH="$APP_HOME/bin:$PATH"
+
+ENTRYPOINT [ "app_name", "start" ]
+```
+
+这个 `Dockerfile` 分为了两个阶段：首先用 Elixir 镜像复制源代码并执行编译命令，然后用原生的 Void Linux 镜像进行了打包。
+
+可以发现打包过程略微复杂，并不能靠简单的 `COPY` 再安装运行时依赖就制作好。这是因为 Void Linux 比想象中还要原始一些，它甚至没有启用任何 `locales`，默认是 `POSIX`（遇到 CJK 字符会乱码）。我们必须先启用然后重新生成 `locales`。
+
+## 结束语
+
+到此，使用 Void Linux 打包 Elixir 应用就完成了。如果你的项目足够复杂，可能会扩展到其它语言的生态，此时 Void Linux 就会带来极大的帮助。
+
+我的某些项目集成了 Rust，并使用了一些流行的 C 库（如 ImageMagick）。通过 Void Linux 能轻松安装最新的版本，且镜像体积相比 Deiban 环境缩小了 35% 以上。
