@@ -18,7 +18,7 @@ _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
 
 ## 过程
 
-想实现用 Void Linux 环境打包应用的目的，需要从 `Erlang -> Elixir -> App` 这三个步骤先后做起。
+想用 Void Linux 环境打包 Elixir 应用，需要从 `Erlang -> Elixir -> App` 这三个步骤先后构建镜像。
 
 ### 构建 Erlang 镜像
 
@@ -100,7 +100,7 @@ find /var/db/xbps/ -type d -name "https___repo-*" -exec rm -rf {} +
 
 ### 构建 Elixir 镜像
 
-构建 Elixir 镜像会麻烦一些，因为 Elixir 在编译期间会触发一个 BUG。这个 BUG 和 QEMU 相关，要知道 `buildx` 构建其它架构的镜像时就会用到 QEMU。我可能还需要再声明一遍，这个 BUG 虽然是编译 Elixir 触发的，但和 Erlang/Elixir 没关系，是 Docker 工具链的问题。
+构建 Elixir 镜像会麻烦一些，因为编译 Elixir 期间会触发一个 BUG。此 BUG 背后的原理很难简单说清楚，它跟 Erlang 运行时的 JIT 的性能收集有关，只发生于 QEMU 的虚拟机中。而 `buildx` 命令使用 QEMU 来构建其它架构的镜像。
 
 从[这里](https://hub.docker.com/r/hentioe/elixir/tags)查看我发布的镜像，同时提供 `amd64` 和 `arm64`（不同的架构刻意做了标签名区分）。它们是由我的 CI 服务器构建并推送的。我永远会第一时间更新最新的版本，包括 RC。
 
@@ -156,7 +156,9 @@ RUN set -xe \
 CMD ["iex"]
 ```
 
-我们从外部接收了一个 `ERL_FLAGS` 环境变量。这个变量是避免 `buildx` BUG 的刻意为之，否则并不需要它（或者说不用设置它）。当我们为其它的 `arch` 构建镜像时，必须用这个变量传递 `+JPperf true` 值，否则会构建失败。由于这个原因，我不得不将不同架构的镜像用各自的标签独立开来。
+我们从外部接收了一个 `ERL_FLAGS` 参数并作为同名环境变量。这个变量是避免 `buildx` 构建多架构失败的刻意为之，否则并不需要它（或者说不用设置它）。当我们为其它的 `arch` 构建镜像时，必须给此参数传递 `+JPperf true` 以避免相关 BUG 发生。也是由于这个原因，我不得不将不同架构的镜像用各自的标签独立开来。
+
+Erlang/OTP 26 发布以后，多了一个 `+JMsingle` 参数，据说可以避免 QEMU 环境中的运行时崩溃。我目前还未正式调研和测试此参数，有待后续更新此部分。
 
 ### 构建 App 镜像
 
@@ -212,8 +214,11 @@ ENTRYPOINT [ "app_name", "start" ]
 
 可以发现打包过程略微复杂，并不能靠简单的 `COPY` 再安装运行时依赖就制作好。这是因为 Void Linux 比想象中还要原始一些，它甚至没有启用任何 `locales`，默认是 `POSIX`（遇到 CJK 字符会乱码）。我们必须先启用然后重新生成 `locales`。
 
+>本文可能会过时，可参考 [`Hentioe/my-docker-erlang-otp`](https://github.com/Hentioe/my-docker-erlang-otp) 和 [`Hentioe/my-docker-elixir`](https://github.com/Hentioe/my-docker-elixir) 两个仓库。
+{: .prompt-info }
+
 ## 结束语
 
-到此，使用 Void Linux 打包 Elixir 应用就完成了。如果你的项目足够复杂，可能会扩展到其它语言的生态，此时 Void Linux 就会带来极大的帮助。
+到此，使用 Void Linux 打包 Elixir 应用就完成了。如果你的项目足够复杂，可能会扩展到其它语言的生态，此时 Void Linux 就会带来很大的帮助。
 
 我的某些项目集成了 Rust，并使用了一些流行的 C 库（如 ImageMagick）。通过 Void Linux 能轻松安装最新的版本，且镜像体积相比 Deiban 环境缩小了 35% 以上。
