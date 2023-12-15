@@ -11,7 +11,7 @@ Void Linux 是一个忍不住想关注的发行版，它既可以较为精小，
 
 毫无疑问，将 glibc/BusyBox 版本作为基础容器是非常合适的。例如我已将其用作 Elixir 应用的基础，且效果不错。它比 Debian 更小巧，软件包也新得多。至少对我而言 `-void` 已经成为了 `-slim` 的良好替代品。
 
->此处提及的 `-slim` 是常见的以 Debian 为基础的镜像标签后缀的“命名风格”，不具有强关联性。
+>此处提及的 `-slim` 是常见的以 Debian 为基础的镜像标签名后缀风格，不具有强相关性。
 {: .prompt-warning }
 
 _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
@@ -24,7 +24,7 @@ _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
 1. 它发布有基于 glibc 的 BusyBox 版本，而 Alpine 这种同用 BusyBox 的发行版基于 musl。当我们的应用在常规环境开发测试时，glibc 永远是 Tier 1 的可靠性。musl 可以作为精小的特供版本，不应该成为唯一的目标。
 1. 它的包非常新，可以避免时长要从源码构建依赖库的麻烦（或者说避免使用老旧的充满漏洞的库）。
 
-所以我说 Void Linux 十分适合作为容器环境。它在可靠性和精小方面比较平衡，介于 Alpine 和 Debian 之间。
+所以我说 Void Linux 十分适合作为容器环境。它在可靠性和体积方面比较平衡，介于 Alpine 和 Debian 之间。
 
 ### 谨慎选择
 
@@ -50,23 +50,26 @@ FROM ghcr.io/void-linux/void-glibc-busybox:20231003R1
 
 COPY cleanup.sh /usr/bin/void-cleanup
 
-ENV OTP_VERSION="26.1.2"
+ENV OTP_VERSION="26.2" \
+    # Declare runtime dependencies. \
+    RUNTIME_DEPS=' \
+    libstdc++ \
+    libssl3 \
+    lksctp-tools \
+    ncurses-libs \
+    '
 
 LABEL org.opencontainers.image.version=$OTP_VERSION
 
 RUN set -xe \
     && OTP_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${OTP_VERSION}.tar.gz" \
-    && OTP_DOWNLOAD_SHA256="56042d53b30863d4e720ebf463d777f0502f8c986957fc3a9e63dae870bbafe0" \
+    && OTP_DOWNLOAD_SHA256="25675a40f9953f39440046b5e325cf992b29323b038d147f3533435a2be547e6" \
     && fetchDeps=' \
     curl' \
-    && xbps-install -Suy \
-    && xbps-install -y $fetchDeps \
+    && xbps-install -Sy \
+    && xbps-install -Ay $fetchDeps \
     && curl -fSL -o otp-src.tar.gz "$OTP_DOWNLOAD_URL" \
     && echo "$OTP_DOWNLOAD_SHA256  otp-src.tar.gz" | sha256sum -c - \
-    && runtimeDeps=' \
-    libssl3 \
-    lksctp-tools \
-    ' \
     && buildDeps=' \
     autoconf \
     dpkg \
@@ -78,7 +81,7 @@ RUN set -xe \
     pax-utils \
     binutils \
     ' \
-    && xbps-install -y $buildDeps \
+    && xbps-install -Ay $buildDeps \
     && export ERL_TOP="/usr/src/otp_src_${OTP_VERSION%%@*}" \
     && mkdir -vp $ERL_TOP \
     && tar -xzf otp-src.tar.gz -C $ERL_TOP --strip-components=1 \
@@ -94,9 +97,9 @@ RUN set -xe \
     && find /usr/local -name src | xargs -r find | xargs rmdir -vp || true \
     && scanelf --nobanner -E ET_EXEC -BF '%F' --recursive /usr/local | xargs -r strip --strip-all \
     && scanelf --nobanner -E ET_DYN -BF '%F' --recursive /usr/local | xargs -r strip --strip-unneeded \
-    && xbps-remove -Ry $buildDeps $fetchDeps \
-    # Install runtime dependencies in the back door to avoid being removed by association. \
-    && xbps-install -y $runtimeDeps \ 
+    && xbps-remove -Roy $buildDeps $fetchDeps \
+    # Install runtime dependencies (must be done after cleaning build dependencies). \
+    && xbps-install -y $RUNTIME_DEPS \ 
     && rm -rf otp-src.tar.gz $ERL_TOP \
     && void-cleanup
 
@@ -105,7 +108,7 @@ CMD ["erl"]
 
 为了尽可能小巧，它会删除文档、源码、示例等文件，并用 `strip` 删除了二进制文件的调试信息。
 
-你可能注意到此 `Dockerfile` 最终执行了一个看起来用于清理的脚本（`void-cleanup`），它在一开始被复制进去。没错，这是我故意内置的，便于执行清理。它是这个样子的：
+你可能注意到此 `Dockerfile` 最终执行了一个看起来用于清理的脚本（`void-cleanup`），它在一开始被复制进去。这是我故意内置的，便于执行清理 `xbps` 缓存。它是这个样子的：
 
 ```sh
 #!/usr/bin/env sh
@@ -116,6 +119,13 @@ rm -rf /var/cache/xbps/*
 echo "Clearing xbps repository..."
 find /var/db/xbps/ -type d -name "https___repo-*" -exec rm -rf {} +
 ```
+
+以上都是值得说明的，但真正值得注意和学习的，其实是 `xbps-install -A` 命令。
+
+如果没有 `-A` 这个命令行选项，`xbpx-remove -Ro` 也不一定总能在复杂的依赖树中找出全部可以移除的孤立包。这会导致镜像体积膨胀，因为多余的构建时依赖包被保留。即使是其它包管理系统，为了打包出最小的镜像体积，你也不得不留意这方面。
+
+>如果 `-A` 选项仍无法避免构建时的依赖包残留，你可以尝试用同样的包列表二次执行 `xbpx-remove -Ro` 命令。
+{: .prompt-info }
 
 ### 构建 Elixir 镜像
 
