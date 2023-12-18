@@ -46,11 +46,11 @@ Erlang 相对来说问题是最少的，通过 `buildx` 命令可轻易构建出
 这是一个例子：
 
 ```Dockerfile
-FROM ghcr.io/void-linux/void-glibc-busybox:20231003R1
+FROM ghcr.io/void-linux/void-glibc-busybox:20231202R1
 
 COPY cleanup.sh /usr/bin/void-cleanup
 
-ENV OTP_VERSION="26.2" \
+ENV OTP_VERSION="26.2.1" \
     # Declare runtime dependencies. \
     RUNTIME_DEPS=' \
     libstdc++ \
@@ -63,7 +63,7 @@ LABEL org.opencontainers.image.version=$OTP_VERSION
 
 RUN set -xe \
     && OTP_DOWNLOAD_URL="https://github.com/erlang/otp/archive/OTP-${OTP_VERSION}.tar.gz" \
-    && OTP_DOWNLOAD_SHA256="25675a40f9953f39440046b5e325cf992b29323b038d147f3533435a2be547e6" \
+    && OTP_DOWNLOAD_SHA256="d99eab3af908b41dd4d7df38f0b02a447579326dd6604f641bbe9f2789b5656b" \
     && fetchDeps=' \
     curl' \
     && xbps-install -Sy \
@@ -136,58 +136,62 @@ find /var/db/xbps/ -type d -name "https___repo-*" -exec rm -rf {} +
 例子：
 
 ```Dockerfile
-FROM hentioe/erlang:26.1.2-void
+FROM hentioe/erlang:26.2.1-void
 
 ARG ERL_FLAGS=""
 
-ENV ELIXIR_VERSION="v1.16.0-rc.0" \
- # set flags from build_arg. \
- ERL_FLAGS=$ERL_FLAGS \
- # elixir expects utf8. \
- LANG=C.UTF-8 
+ENV ELIXIR_VERSION="v1.16.0-rc.1" \
+    # elixir expects utf8.
+    LANG=C.UTF-8 \
+    # set flags from build_arg.
+    ERL_FLAGS=$ERL_FLAGS \
+    # Declare runtime dependencies.
+    RUNTIME_DEPS=' \
+    libstdc++ \
+    libssl3 \
+    lksctp-tools \
+    ncurses-libs \
+    '
 
 RUN set -xe \
- && ELIXIR_DOWNLOAD_URL="https://github.com/elixir-lang/elixir/archive/${ELIXIR_VERSION}.tar.gz" \
- && ELIXIR_DOWNLOAD_SHA256="2dfbe017ccff1b05cacf80d7204b088ab438ec6ff1311a3bd9d33ceb2c26674e" \
- && buildDeps=' \
- curl \
- make \
- glibc-locales \
- ' \
- && xbps-install -Sy \
- && xbps-install -y $buildDeps \
- # Set locale to C.UTF-8 \
- && sed -i 's/^#C.UTF-8/C.UTF-8/' /etc/default/libc-locales \
- && xbps-reconfigure -f glibc-locales \
- # Build and install Elixir \
- && curl -fSL -o elixir-src.tar.gz $ELIXIR_DOWNLOAD_URL \
- && echo "$ELIXIR_DOWNLOAD_SHA256  elixir-src.tar.gz" | sha256sum -c - \
- && mkdir -p /usr/local/src/elixir \
- && tar -xzC /usr/local/src/elixir --strip-components=1 -f elixir-src.tar.gz \
- && ( cd /usr/local/src/elixir \
- && make install clean ) \
- # Clean up \
- && find /usr/local/src/elixir/ -type f -not -regex "/usr/local/src/elixir/lib/[^\/]*/lib.*" -exec rm -rf {} + \
- && find /usr/local/src/elixir/ -type d -depth -empty -delete \
- && xbps-remove -Ry $buildDeps \
- # Install runtime dependencies in the back door to avoid being removed by association. \
- && runtimeDeps=' \
- libstdc++ \
- libssl3 \
- lksctp-tools \
- ncurses-libs \
- ' \
- && xbps-install -y $runtimeDeps \ 
- && rm elixir-src.tar.gz \
- && rm -f /tmp/jit-*.dump /tmp/perf-*.map \
- && void-cleanup
+    && ELIXIR_DOWNLOAD_URL="https://github.com/elixir-lang/elixir/archive/${ELIXIR_VERSION}.tar.gz" \
+    && ELIXIR_DOWNLOAD_SHA256="057aca982fd840f2e01c2d60e51523d6870e6937bea58f0e0860d118b7ca2de4" \
+    && buildDeps=' \
+    curl \
+    make \
+    glibc-locales \
+    ' \
+    && xbps-install -Sy \
+    && xbps-install -Ay $buildDeps \
+    # Set locale to C.UTF-8
+    && sed -i 's/^#C.UTF-8/C.UTF-8/' /etc/default/libc-locales \
+    && xbps-reconfigure -f glibc-locales \
+    # Build and install Elixir
+    && curl -fSL -o elixir-src.tar.gz $ELIXIR_DOWNLOAD_URL \
+    && echo "$ELIXIR_DOWNLOAD_SHA256  elixir-src.tar.gz" | sha256sum -c - \
+    && mkdir -p /usr/local/src/elixir \
+    && tar -xzC /usr/local/src/elixir --strip-components=1 -f elixir-src.tar.gz \
+    && ( cd /usr/local/src/elixir \
+    && make install clean ) \
+    # Clean up
+    && find /usr/local/src/elixir/ -type f -not -regex "/usr/local/src/elixir/lib/[^\/]*/lib.*" -exec rm -rf {} + \
+    && find /usr/local/src/elixir/ -type d -depth -empty -delete \
+    && xbps-remove -Roy $buildDeps \
+    # Install runtime dependencies (must be done after cleaning build dependencies).
+    && xbps-install -y $RUNTIME_DEPS \ 
+    && rm elixir-src.tar.gz \
+    && rm -f /tmp/jit-*.dump /tmp/perf-*.map \
+    && void-cleanup
 
 CMD ["iex"]
 ```
 
 我们从外部接收了一个 `ERL_FLAGS` 参数并作为同名环境变量。这个变量是避免 `buildx` 构建多架构失败的刻意为之，否则并不需要它（或者说不用设置它）。当我们为其它的 `arch` 构建镜像时，必须给此参数传递 `+JPperf true` 以避免相关 BUG 发生。也是由于这个原因，我不得不将不同架构的镜像用各自的标签独立开来。
 
-Erlang/OTP 26 发布以后，多了一个 `+JMsingle` 参数，据说可以避免 QEMU 环境中的运行时崩溃。我目前还未正式调研和测试此参数，有待后续更新此部分。
+>在 `Dockerfile` 末尾的清理步骤中，包含一句 `rm -f /tmp/jit-*.dump /tmp/perf-*.map` 命令。这和 `+JPperf true` 参数有关，它会在 `/tmp` 目录下生成一些文件，若不删除它们会导致镜像体积膨胀。
+{: .prompt-info }
+
+Erlang/OTP 26 发布以后，新增了 `+JMsingle` 参数，据说可以避免 QEMU 环境中的运行时崩溃。我目前还未正式调研和测试此参数，有待后续更新此部分。
 
 ### 构建 App 镜像
 
