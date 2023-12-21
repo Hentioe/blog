@@ -9,10 +9,10 @@ tags: [Void Linux, Elixir, Docker]     # TAG names should always be lowercase
 
 Void Linux 是一个忍不住想关注的发行版，它既可以较为精小，又可以相对膨胀。它同时维护 glibc 和 musl 两个不同 C 库的版本，又发布有内置 BusyBox 和 GNU Coreutils 两个不同工具集的版本。
 
-毫无疑问，将 glibc/BusyBox 版本作为基础容器是非常合适的。例如我已将其用作 Elixir 应用的基础，且效果不错。它比 Debian 更小巧，软件包也新得多。至少对我而言 `-void` 已经成为了 `-slim` 的良好替代品。
+将 glibc/BusyBox 版本作为基础容器是非常合适的，我已将其用作 Elixir 应用的基础，且效果不错。它比 Debian 更小巧，软件包也新得多。至少对我而言 `-void` 已经成为了 `-slim` 的良好替代品。
 
->此处提及的 `-slim` 是常见的以 Debian 为基础的镜像标签名后缀风格，不具有强相关性。
-{: .prompt-warning }
+>此处提及的 `-slim` 是常见的以 Debian 为基础的镜像标签名后缀风格。
+{: .prompt-info }
 
 _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
 
@@ -28,9 +28,9 @@ _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
 
 ### 谨慎选择
 
-本文无意图干扰任何人的技术选型，包括 Docker 基础镜像的选择。实际上我并不建议阅读本文的人跟随我做同样的选择，因为 Void Linux 相比 Debian 并不是一个足够成熟的发行版，且各个方面都可能存在差异。
+本文无意图干扰任何人的基础设施选型，实际上我并不建议阅读本文的人跟随我做同样的选择。Void Linux 相比 Debian 并不是一个足够成熟的发行版，且各个方面都可能存在差异。如果你没有丰富的 Linux 使用经验和很强的问题排查能力，我绝不建议你这样做。
 
-如果你没有丰富的 Linux 使用经验和很强的问题排查能力，我绝不建议你这样做。你应该尽可能的使用官方发布的镜像。但你仍然可以尝试本文的内容，不用于生产。
+不过事实上我也不推荐你们用“官方”的镜像，原因参考[此处](#不建议使用-docker-官方镜像)。
 
 ## 例子
 
@@ -45,17 +45,23 @@ _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
 | [`elixir`](https://hub.docker.com/layers/library/elixir/1.15.7-slim/images/sha256-df24832e2b9d89b58ca5b2dd0945f4b2b22abf9f8be0a8ea4f610bb940fe6a9e?context=explore) | 1.15.7-slim | 123.8 MB |
 | [`hentioe/elixir`](https://hub.docker.com/layers/hentioe/elixir/1.16-otp-26-void/images/sha256-f5ef811c03f86beb07ab08ca71459573ced0284dac2c26cd8f0bab024cc067e0?context=explore) | 1.16-otp-26-void | 62.6 MB |
 
-它们相比基于 Alpine 的镜像，大了约 `10MB`。我认为基本上已经把体积控制到了极限。体积的极限压缩是我在数次尝试优化的过程中逐步加深了对 Void Linux 的了解，所达到的结果。它并非主要目的。
+它们相比基于 Alpine 的镜像，大了约 `10MB`。我认为基本上已经把体积控制到了极限。体积的减小是我在数次尝试和优化的过程中加深了对 Void Linux 的了解从而达到的结果。它并非主要目的。
 
 >体积并不是最重要的。具有 Docker 镜像常识的都应该知道镜像是一层层的，只要基础镜像不变化镜像的总体积并不表示更新时所下载的大小。
 {: .prompt-info }
 
+### 不建议使用 Docker 官方镜像
+
+Docker 官方 Elixir 镜像的维护者动作非常慢（极不积极），镜像所使用的 Erlang 版本不详，且无任何测试。在我看来是不可靠的。不过我也不建议任何阅读本文的人信任我，我只对自己负责的项目提供支持。
+
+我建议所有人都应该使用 hexpm 的 Elixir 镜像：[hexpm/elixir](https://hub.docker.com/r/hexpm/elixir)。不仅维护积极，且每一个镜像的 Erlang 版本都非常具体，版本覆盖广。还包含有完善的自动化检查和测试。
+
+>此处提及的官方镜像指的是 Docker 官方，也就是不需要 org/user 就能访问的镜像。此“官方”并不表示 Elixir 官方，据我所知 Docker 官方镜像的维护和 Elixir 团队的人没关系。正因为如此，这类消极维护的镜像是不可靠的，不应该被推荐使用。
+{: .prompt-warning }
+
 ## 过程
 
 想用 Void Linux 环境打包 Elixir 应用，需要从 `Erlang -> Elixir -> App` 这三个步骤先后构建镜像。这个过程对于要高度掌控底层的人来说是很有必要的，尤其是我这种不信任官方镜像维护者的人。
-
->Docker 官方 Elixir 镜像的维护者动作很慢，Erlang 版本不详，且无任何测试。在我看来是不可靠的。不过我也不建议任何阅读本文的人信任我，我只对自己负责的项目提供支持。
-{: .prompt-warning }
 
 ### 构建 Erlang 镜像
 
@@ -149,7 +155,7 @@ find /var/db/xbps/ -type d -name "https___repo-*" -exec rm -rf {} +
 
 构建 Elixir 镜像会麻烦一些，因为编译 Elixir 期间会触发一个 BUG。此 BUG 背后的原理很难简单说清楚，它跟 Erlang 运行时的 JIT 默认使用的「双内存映射」机制有关，只发生于 QEMU 的虚拟机中。当我们用 `buildx` 命令构建其它架构的镜像时，Docker 会在背后创建 QEMU 虚拟机来完成。
 
-从[这里](https://hub.docker.com/r/hentioe/elixir/tags)查看我发布的镜像，同时提供 `amd64` 和 `arm64`（不同的架构刻意做了标签名区分）。它们是由我的 CI 服务器构建并推送的。我永远会第一时间更新最新的版本，包括 RC。
+从[这里](https://hub.docker.com/r/hentioe/elixir/tags)查看我发布的镜像，同时提供 `amd64` 和 `arm64`。它们是由我的 CI 服务器构建并推送的。我永远会第一时间更新最新的版本，包括 RC。
 
 例子：
 
@@ -206,11 +212,11 @@ RUN set -xe \
 CMD ["iex"]
 ```
 
-我们根据目标架构动态设置了 `ERL_FLAGS` 变量的值，此变量是为避免 `buildx` 构建多架构失败的刻意为之，否则并不需要它（或者说不用设置它）。当我们为其它的 `arch` （例如 `arm64`）构建镜像时，必须将此变量设置为 `+JMsingle true` 以避免相关 BUG 发生。
+我们根据目标架构动态设置了 `ERL_FLAGS` 变量的值，此变量是为避免 `buildx` 构建多架构失败的刻意为之，否则并不需要它。当我们为其它的 `arch` （例如 `arm64`）构建镜像时，必须将此变量设置为 `+JMsingle true` 以避免相关 BUG 发生。
 
 需要注意的是 `+JMsingle true` 是 Erlang/OTP 26 新增的 flag，如果在 26 以下版本可使用 `+JPperf true`。如果传递后者，还需要在 `Dockerfile` 末尾的清理步骤中删除 `/tmp/jit-*.dump` 和 `/tmp/perf-*.map` 两类文件，避免镜像体积膨胀。
 
->为什么 `ERL_FLAGS` 变量不设置在 `ENV` 指令中呢？通过读取 `ARG` 的值也可以动态设置。实际上在早期我就是这么做的，但我后来意识到这是一个错误。这导致任何运行环境都会关掉 JIT 的双内存映射，这是不必要的。因为这个 BUG 几乎只会出现在 Docker 多架构镜像的构建中。
+>为什么 `ERL_FLAGS` 变量不添加在 `ENV` 指令中呢？通过读取 `ARG` 的值也可以动态设置。实际上在早期我就是这么做的，但我后来意识到这是一个错误。这导致任何运行环境都会关掉 JIT 的双内存映射，这是不必要的。因为这个 BUG 几乎只会出现在 Docker 多架构镜像的构建中。
 {: .prompt-warning }
 
 ### 构建 App 镜像
