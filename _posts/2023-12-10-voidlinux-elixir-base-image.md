@@ -34,7 +34,7 @@ _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
 
 ## 例子
 
-我使用 Void Linux 制作的 Erlang 和 Elixir 镜像，相比 Debian 的镜像体积减小了大约 `60MBM`。
+我使用 Void Linux 制作的 Erlang 和 Elixir 镜像，相比基于 Debian 的镜像体积减小了大约 `60MBM`。
 
 这是具体的镜像例子：
 
@@ -45,7 +45,7 @@ _如果有机会我会进一步介绍 Void Linux，但不是本文的重点。_
 | [`elixir`](https://hub.docker.com/layers/library/elixir/1.15.7-slim/images/sha256-df24832e2b9d89b58ca5b2dd0945f4b2b22abf9f8be0a8ea4f610bb940fe6a9e?context=explore) | 1.15.7-slim | 123.8 MB |
 | [`hentioe/elixir`](https://hub.docker.com/layers/hentioe/elixir/1.16-otp-26-void/images/sha256-f5ef811c03f86beb07ab08ca71459573ced0284dac2c26cd8f0bab024cc067e0?context=explore) | 1.16-otp-26-void | 62.6 MB |
 
-它们相比基于 Alpine 的镜像，大了约 `10MB`。我认为基本上已经把体积控制到了极限。体积的减小是我在数次尝试和优化的过程中加深了对 Void Linux 的了解从而达到的结果。它并非主要目的。
+它们相比基于 Alpine 的镜像，大了约 `10MB`，我认为基本上已经把体积控制到了极限。体积的减小是我在数次尝试和优化的过程中加深了对 Void Linux 的了解从而达到的结果。它并非主要目的。
 
 >体积并不是最重要的。具有 Docker 镜像常识的都应该知道镜像是一层层的，只要基础镜像不变化镜像的总体积并不表示更新时所下载的大小。
 {: .prompt-info }
